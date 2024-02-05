@@ -73,7 +73,7 @@ public class Relationship<T> : IRelationship
     }
 
     /// <inheritdoc cref="IRelationship.Count"/>
-    internal int Count
+    public int Count
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         get => ((IRelationship) this).Count;
