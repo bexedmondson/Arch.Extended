@@ -15,7 +15,7 @@ public class JaggedArrayTest
     ///     Checks if <see cref="JaggedArray{T}"/> is capable of adding items correctly.
     /// </summary>
     [Test]
-    public void Add([Values(256,512,1024)] int capacity)
+    public void Add([Values(256,512,1024,2048,4096)] int capacity)
     {
         // Check add
         var jaggedArray = new JaggedArray<int>(16000/Unsafe.SizeOf<int>(), -1, capacity);
@@ -36,11 +36,63 @@ public class JaggedArrayTest
         That(jaggedArray.Capacity, Is.GreaterThan(capacity));
     }
     
+    [Test]
+    public void TryGetValue([Values(256,512,1024,2048,4096)] int capacity)
+    {
+        // Initialize the JaggedArray
+        var jaggedArray = new JaggedArray<int>(16000/Unsafe.SizeOf<int>(), -1, capacity);
+    
+        // Add elements to the array
+        for (var index = 0; index < jaggedArray.Capacity; index++)
+        {
+            jaggedArray.Add(index, index);
+        }
+
+        // Check values using TryGetValue
+        for (var index = 0; index < jaggedArray.Capacity; index++)
+        {
+            var found = jaggedArray.TryGetValue(index, out int value);
+            That(found, Is.True);
+            That(value, Is.EqualTo(index));
+        }
+
+        // Check for values out of bounds
+        var outOfBoundsFound = jaggedArray.TryGetValue(jaggedArray.Capacity, out int _);
+        That(outOfBoundsFound, Is.False);
+    }
+    
+    [Test]
+    public void TryGetValueRef([Values(256,512,1024,2048,4096)] int capacity)
+    {
+        // Initialize the JaggedArray
+        var jaggedArray = new JaggedArray<int>(16000/Unsafe.SizeOf<int>(), -1, capacity);
+    
+        // Add elements to the array
+        for (var index = 0; index < jaggedArray.Capacity; index++)
+        {
+            jaggedArray.Add(index, index);
+        }
+
+        // Check values using TryGetValue
+        for (var index = 0; index < jaggedArray.Capacity; index++)
+        {
+            bool found;
+            ref var value = ref jaggedArray.TryGetValue(index, out found);
+            That(found, Is.True);
+            That(value, Is.EqualTo(index));
+        }
+
+        // Check for values out of bounds
+        ref var outOfBoundsValue = ref jaggedArray.TryGetValue(jaggedArray.Capacity, out bool outOfBoundsFound);
+        That(outOfBoundsFound, Is.False);
+    }
+
+    
     /// <summary>
     ///     Checks if <see cref="JaggedArray{T}"/> is capable of adding items correctly.
     /// </summary>
     [Test]
-    public void Remove([Values(256,512,1024)] int capacity)
+    public void Remove([Values(256,512,1024,2048,4096)] int capacity)
     {
         // Check add
         var jaggedArray = new JaggedArray<int>(16000/Unsafe.SizeOf<int>(), -1, capacity);
