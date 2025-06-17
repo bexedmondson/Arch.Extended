@@ -66,18 +66,18 @@ public static class QueryUtils
     {
         if (parameterSymbols.Count == 0)
         {
-            sb.Append("Array.Empty<ComponentType>()");
+            sb.Append("Signature.Null");
             return sb;
         }
 
-        sb.Append("new ComponentType[]{");
+        sb.Append("new Signature(");
         
         foreach (var symbol in parameterSymbols)
             if(symbol.Name is not "Entity") // Prevent entity being added to the type array
                 sb.Append($"typeof({symbol.ToDisplayString(NullableFlowState.None, SymbolDisplayFormat.FullyQualifiedFormat)}),");
         
         if (sb.Length > 0) sb.Length -= 1;
-        sb.Append('}');
+        sb.Append(')');
 
         return sb;
     }
@@ -99,6 +99,45 @@ public static class QueryUtils
                 sb.Append($"{CommonUtils.RefKindToString(parameter.RefKind)} {parameter.Type} @{parameter.Name.ToLower()},");
         }
         sb.Length--;
+        return sb;
+    }
+    
+    /// <summary>
+    ///     Appends a set of <see cref="parameterSymbols"/> if they are marked by the data attribute.
+    ///     <example>ref gameTime, out somePassedList,...</example>
+    /// </summary>
+    /// <param name="sb">The <see cref="StringBuilder"/> instance.</param>
+    /// <param name="parameterSymbols">The <see cref="IEnumerable{T}"/> of <see cref="IParameterSymbol"/>s which will be appended if they are marked with data.</param>
+    /// <returns></returns>
+    public static StringBuilder JobParameters(this StringBuilder sb, IEnumerable<IParameterSymbol> parameterSymbols)
+    {
+        foreach (var parameter in parameterSymbols)
+        {
+            if (parameter.GetAttributes().Any(attributeData => attributeData.AttributeClass.Name.Contains("Data")))
+                sb.AppendLine($"public {parameter.Type} @{parameter.Name.ToLower()};");
+        }
+        return sb;
+    }
+    
+    /// <summary>
+    ///     Appends a set of <see cref="parameterSymbols"/> if they are marked by the data attribute.
+    ///     <example>ref gameTime, out somePassedList,...</example>
+    /// </summary>
+    /// <param name="sb">The <see cref="StringBuilder"/> instance.</param>
+    /// <param name="parameterSymbols">The <see cref="IEnumerable{T}"/> of <see cref="IParameterSymbol"/>s which will be appended if they are marked with data.</param>
+    /// <returns></returns>
+    public static StringBuilder JobParametersAssigment(this StringBuilder sb, IEnumerable<IParameterSymbol> parameterSymbols)
+    {
+        bool found = false;
+        foreach (var parameter in parameterSymbols)
+        {
+            if (parameter.GetAttributes().Any(attributeData => attributeData.AttributeClass.Name.Contains("Data")))
+            {
+                found = true;
+                sb.Append($"@{parameter.Name.ToLower()} = @{parameter.Name.ToLower()},");
+            }
+        }
+        if (found) sb.Length--;
         return sb;
     }
     
@@ -160,6 +199,9 @@ public static class QueryUtils
         var entity = methodSymbol.Parameters.Any(symbol => symbol.Type.Name.Equals("Entity"));
         var entityParam = entity ? methodSymbol.Parameters.First(symbol => symbol.Type.Name.Equals("Entity")) : null;
 
+        var queryData = methodSymbol.GetAttributeData("Query");
+        bool isParallel = (bool)(queryData.NamedArguments.FirstOrDefault(d => d.Key == "Parallel").Value.Value ?? false);
+
         // Get attributes
         var attributeData = methodSymbol.GetAttributeData("All");
         var anyAttributeData = methodSymbol.GetAttributeData("Any");
@@ -216,7 +258,7 @@ public static class QueryUtils
             ExclusiveFilteredTypes = exclusiveArray
         };
         
-        return sb.AppendQueryMethod(ref queryMethod);
+        return isParallel ? sb.AppendParallelQueryMethod(ref queryMethod) : sb.AppendQueryMethod(ref queryMethod);
     }
 
     /// <summary>
@@ -242,6 +284,7 @@ public static class QueryUtils
 
         var template = 
             $$"""
+            #nullable enable
             using System;
             using System.Runtime.CompilerServices;
             using System.Runtime.InteropServices;
@@ -249,19 +292,19 @@ public static class QueryUtils
             using Arch.Core.Extensions;
             using Arch.Core.Utils;
             using ArrayExtensions = CommunityToolkit.HighPerformance.ArrayExtensions;
-            using Component = Arch.Core.Utils.Component;
+            using Component = Arch.Core.Component;
             {{(!queryMethod.IsGlobalNamespace ? $"namespace {queryMethod.Namespace} {{" : "")}}
                 partial class {{queryMethod.ClassName}}{
                     
-                    private {{staticModifier}} QueryDescription {{queryMethod.MethodName}}_QueryDescription = new QueryDescription{
-                        All = {{allTypeArray}},
-                        Any = {{anyTypeArray}},
-                        None = {{noneTypeArray}},
-                        Exclusive = {{exclusiveTypeArray}}
-                    };
+                    private {{staticModifier}} QueryDescription {{queryMethod.MethodName}}_QueryDescription = new QueryDescription(
+                        all: {{allTypeArray}},
+                        any: {{anyTypeArray}},
+                        none: {{noneTypeArray}},
+                        exclusive: {{exclusiveTypeArray}}
+                    );
 
                     private {{staticModifier}} World? _{{queryMethod.MethodName}}_Initialized;
-                    private {{staticModifier}} Query _{{queryMethod.MethodName}}_Query;
+                    private {{staticModifier}} Query? _{{queryMethod.MethodName}}_Query;
 
                     [MethodImpl(MethodImplOptions.AggressiveInlining)]
                     public {{staticModifier}} void {{queryMethod.MethodName}}Query(World world {{data}}){
@@ -271,9 +314,8 @@ public static class QueryUtils
                             _{{queryMethod.MethodName}}_Initialized = world;
                         }
 
-                        foreach(ref var chunk in _{{queryMethod.MethodName}}_Query.GetChunkIterator()){
+                        foreach(ref var chunk in _{{queryMethod.MethodName}}_Query){
                             
-                            var chunkSize = chunk.Size;
                             {{(queryMethod.IsEntityQuery ? "ref var entityFirstElement = ref chunk.Entity(0);" : "")}}
                             {{getFirstElements}}
 
@@ -294,6 +336,92 @@ public static class QueryUtils
     }
 
     /// <summary>
+    ///     Adds a parallel query with an entity for a given annotated method. The attributes of these methods are used to generate the query.
+    /// </summary>
+    /// <param name="sb">The <see cref="StringBuilder"/> instance.</param>
+    /// <param name="queryMethod">The <see cref="QueryMethod"/> which is generated.</param>
+    /// <returns></returns>
+    public static StringBuilder AppendParallelQueryMethod(this StringBuilder sb, ref QueryMethod queryMethod)
+    {
+        var staticModifier = queryMethod.IsStatic ? "static" : "";
+        
+        // Generate code 
+        var jobParameters = new StringBuilder().JobParameters(queryMethod.Parameters);
+        var jobParametersAssigment = new StringBuilder().JobParametersAssigment(queryMethod.Parameters);
+        var data = new StringBuilder().DataParameters(queryMethod.Parameters);
+        var getFirstElements = new StringBuilder().GetFirstElements(queryMethod.Components);
+        var getComponents = new StringBuilder().GetComponents(queryMethod.Components);
+        var insertParams = new StringBuilder().InsertParams(queryMethod.Parameters);
+        
+        var allTypeArray = new StringBuilder().GetTypeArray(queryMethod.AllFilteredTypes);
+        var anyTypeArray = new StringBuilder().GetTypeArray(queryMethod.AnyFilteredTypes);
+        var noneTypeArray = new StringBuilder().GetTypeArray(queryMethod.NoneFilteredTypes);
+        var exclusiveTypeArray = new StringBuilder().GetTypeArray(queryMethod.ExclusiveFilteredTypes);
+
+        var template = 
+            $$"""
+            #nullable enable
+            using System;
+            using System.Runtime.CompilerServices;
+            using System.Runtime.InteropServices;
+            using Arch.Core;
+            using Arch.Core.Extensions;
+            using Arch.Core.Utils;
+            using ArrayExtensions = CommunityToolkit.HighPerformance.ArrayExtensions;
+            using Component = Arch.Core.Component;
+            {{(!queryMethod.IsGlobalNamespace ? $"namespace {queryMethod.Namespace} {{" : "")}}
+                partial class {{queryMethod.ClassName}}{
+                    
+                    private {{staticModifier}} QueryDescription {{queryMethod.MethodName}}_QueryDescription = new QueryDescription(
+                        all: {{allTypeArray}},
+                        any: {{anyTypeArray}},
+                        none: {{noneTypeArray}},
+                        exclusive: {{exclusiveTypeArray}}
+                    );
+
+                    private {{staticModifier}} World? _{{queryMethod.MethodName}}_Initialized;
+                    private {{staticModifier}} Query? _{{queryMethod.MethodName}}_Query;
+
+                    private struct {{queryMethod.MethodName}}QueryJobChunk : IChunkJob 
+                    {
+                        {{jobParameters}}
+                        
+                        public void Execute(ref Chunk chunk) {
+                        
+                            {{(queryMethod.IsEntityQuery ? "ref var entityFirstElement = ref chunk.Entity(0);" : "")}}
+                            {{getFirstElements}}
+                    
+                            foreach(var entityIndex in chunk)
+                            {
+                                {{(queryMethod.IsEntityQuery ? $"ref readonly var {queryMethod.EntityParameter.Name.ToLower()} = ref Unsafe.Add(ref entityFirstElement, entityIndex);" : "")}}
+                                {{getComponents}}
+                                {{queryMethod.MethodName}}({{insertParams}});
+                            }
+                        }
+                    }
+            
+                    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+                    public {{staticModifier}} void {{queryMethod.MethodName}}Query(World world {{data}}){
+                     
+                        if(!ReferenceEquals(_{{queryMethod.MethodName}}_Initialized, world)) {
+                            _{{queryMethod.MethodName}}_Query = world.Query(in {{queryMethod.MethodName}}_QueryDescription);
+                            _{{queryMethod.MethodName}}_Initialized = world;
+                        }
+                        
+                        var job = new {{queryMethod.MethodName}}QueryJobChunk() { {{jobParametersAssigment}} };
+                        world.InlineParallelChunkQuery(in {{queryMethod.MethodName}}_QueryDescription, job);
+                    }
+                }
+            {{(!queryMethod.IsGlobalNamespace ? "}" : "")}}
+            """;
+
+        sb.Append(template);
+        return sb;
+    }
+
+    
+
+    /// <summary>
     ///     Adds a basesystem that calls a bunch of query methods. 
     /// </summary>
     /// <param name="sb">The <see cref="StringBuilder"/> instance.</param>
@@ -310,7 +438,7 @@ public static class QueryUtils
         while (type != null)
         {
             // Update was implemented by user, no need to do that by source generator.
-            if (type.MemberNames.Contains("Update"))
+            if (type.GetMembers("Update").OfType<IMethodSymbol>().Any(member => member.IsOverride))
                 implementsUpdate = true;
 
             type = type.BaseType;

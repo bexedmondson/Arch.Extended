@@ -1,9 +1,9 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFrameworks>net7.0; net6.0; netstandard2.1</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
-        
+
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\$(AssemblyName).xml</DocumentationFile>
         <IncludeSymbols>true</IncludeSymbols>
@@ -11,12 +11,11 @@
 
         <PackageId>Arch.System</PackageId>
         <Title>Arch.System</Title>
-        <Version>1.0.3</Version>
+        <Version>1.1.0</Version>
         <Authors>genaray</Authors>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <Description>A systems framework for arch.</Description>
-        <PackageReleaseNotes>BaseSystem does not have Data property anymore.
-Before, Update and AfterUpdate pass the data directly to the method now. </PackageReleaseNotes>
+        <PackageReleaseNotes>Made group extendible. </PackageReleaseNotes>
         <PackageTags>c#;.net;.net6;.net7;ecs;game;entity;gamedev; game-development; game-engine; entity-component-system; arch;</PackageTags>
 
         <PackageProjectUrl>https://github.com/genaray/Arch.Extended</PackageProjectUrl>
@@ -28,8 +27,27 @@ Before, Update and AfterUpdate pass the data directly to the method now. </Packa
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <Copyright>Apache2.0</Copyright>
         <PackageLicenseUrl></PackageLicenseUrl>
+        <SatelliteResourceLanguages>en-US</SatelliteResourceLanguages>
 
         <UnityPublish>true</UnityPublish>
     </PropertyGroup>
 
+    <ItemGroup>
+        <None Update="Templates\GenericAttributes.tt">
+            <Generator>TextTemplatingFileGenerator</Generator>
+            <LastGenOutput>GenericAttributes.cs</LastGenOutput>
+        </None>
+    </ItemGroup>
+    
+    <ItemGroup>
+      <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Compile Update="Templates\GenericAttributes.cs">
+        <DesignTime>True</DesignTime>
+        <AutoGen>True</AutoGen>
+        <DependentUpon>GenericAttributes.tt</DependentUpon>
+      </Compile>
+    </ItemGroup>
 </Project>
